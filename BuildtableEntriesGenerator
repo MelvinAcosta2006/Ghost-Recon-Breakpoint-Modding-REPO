@@ -108,20 +108,21 @@ def generate_dynamic_property():
     short_path = os.path.basename(path)
 
     if structure == 'Handle':
-        ref_block = f'''      <Handle>
-        <Value Name="Value" Type="UInt64" Path="{short_path}">{file_id}</Value>
-      </Handle>'''
+        ref_block = f'''<Handle>
+                        <Value Name="Value" Type="UInt64" Path="{short_path}">{file_id}</Value>
+                    </Handle>'''
     else:
-        ref_block = f'''      <Reference>
-        <FileReference Name="Value" IsGlobal="0" Path="{short_path}">{file_id}</FileReference>
-      </Reference>'''
+        ref_block = f'''<Reference>
+                        <FileReference Name="Value" IsGlobal="0" Path="{short_path}">{file_id}</FileReference>
+                    </Reference>'''
 
-    generated = f'''    <DynamicProperty Index="{next_index}">
-      <Value Name="DataType" Type="UInt32" HashName="{dtype}">{dt_id}</Value>
-      <Value Name="Type" Type="UInt32">{type_val}</Value>
-      <Value Name="Unk00" Type="UInt32">0</Value>
-{ref_block}
-    </DynamicProperty>'''
+    generated = f'''
+                <DynamicProperty Index="{next_index}">
+                    <Value Name="DataType" Type="UInt32" HashName="{dtype}">{dt_id}</Value>
+                    <Value Name="Type" Type="UInt32">{type_val}</Value>
+                    <Value Name="Unk00" Type="UInt32">0</Value>
+                    {ref_block}
+                </DynamicProperty>'''
 
     output_text.delete("1.0", tk.END)
     output_text.insert(tk.END, generated)
@@ -138,18 +139,6 @@ def generate_column():
         return
 
     dt_id, type_val, structure = dt_map[dtype]
-    path = file_entry.get()
-    file_id = id_entry.get()
-    if not path or not file_id:
-        messagebox.showerror("Missing Info", "File path or ID is missing")
-        return
-
-    short_path = os.path.basename(path)
-
-    ref_block = f'''      <Reference>
-        <FileReference Name="Value" IsGlobal="0" Path="{short_path}">{file_id}</FileReference>
-      </Reference>'''
-    
     global next_id, next_index
     next_id = find_max_id(loaded_xml) + 1
     next_index = find_max_index(loaded_xml)
@@ -158,7 +147,8 @@ def generate_column():
     col_index = next_index
     next_id += 2
     update_next_labels()
-    generated = f'''<BuildColumn ID="{col_id}" Index="{col_index}">
+    generated = f'''
+        <BuildColumn ID="{col_id}" Index="{col_index}">
             <Value Name="Pass" Type="Enum" EnumName="BuildColumnPass" ValueName="PropertyModifications2">5</Value>
             <PropertyPath Name="TargetProperty" ID="{prop_id}">
                 <List Name="Nodes" />
