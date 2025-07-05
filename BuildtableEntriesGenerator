@@ -7,6 +7,62 @@ loaded_xml = ""
 current_path = ""
 next_id = 0
 next_index = 1
+buildrow_matches = []
+buildrow_vars = {}
+generated_properties = []
+generated_columns = []
+
+def smart_indent(xml_block, base_indent=12):
+    lines = xml_block.strip().splitlines()
+    indented_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(('<BuildColumn', '</BuildColumn>', '<DynamicProperty', '</DynamicProperty>', '</BuildRow>')):
+            indent = base_indent
+        elif stripped.startswith(('<Handle', '</Handle>', '<Reference', '</Reference>', '<FileReference', '</FileReference>', '<Value Name="DataType', '<Value Name="Type', '<Value Name="Unk00')):
+            indent = base_indent + 4
+        elif stripped.startswith('<Value Name="Value') or stripped.startswith('</Value>'):
+            indent = base_indent + 8
+        else:
+            indent = base_indent + 4
+        indented_lines.append(' ' * indent + stripped)
+    return '\n'.join(indented_lines)
+
+def smart_indent_buildcolumn(xml_block, base_indent=8):
+    lines = xml_block.strip().splitlines()
+    indented_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('<BuildColumn') or stripped.startswith('</BuildColumn>'):
+            indent = base_indent
+        elif stripped.startswith('<Value Name="Pass"'):
+            indent = base_indent + 4
+        elif stripped.startswith('<PropertyPath'):
+            indent = base_indent + 4
+        elif stripped.startswith('</PropertyPath>'):
+            indent = base_indent + 4
+        elif stripped.startswith('<List Name="Nodes"'):
+            indent = base_indent + 8
+        elif stripped.startswith('<Value Name="TargetMustBeUnique"') or stripped.startswith('<Value Name="SetWholeArray"'):
+            indent = base_indent + 8
+        elif stripped.startswith('<List Name="EntityPositionSelections"'):
+            indent = base_indent + 4
+        elif stripped.startswith('<Value Name="HasTableRef"'):
+            indent = base_indent + 4
+        elif stripped.startswith('<List Name="Components"'):
+            indent = base_indent + 4
+        elif stripped.startswith('<DynamicProperty>') or stripped.startswith('</DynamicProperty>'):
+            indent = base_indent + 8
+        elif stripped.startswith('<Value Name="DataType"') or stripped.startswith('<Value Name="Type"') or stripped.startswith('<Value Name="Unk00"'):
+            indent = base_indent + 12
+        elif stripped.startswith('<Reference>') or stripped.startswith('</Reference>'):
+            indent = base_indent + 12
+        elif stripped.startswith('<FileReference') or stripped.startswith('</FileReference'):
+            indent = base_indent + 16
+        else:
+            indent = base_indent + 4  # safe default
+        indented_lines.append(' ' * indent + stripped)
+    return '\n'.join(indented_lines)
 
 def find_max_id(xml):
     matches = re.findall(r'<Value Name="BuildColumnMask" Type="UInt32">\d+</Value>.*?ID="(\d+)"', xml, re.DOTALL)
@@ -22,7 +78,7 @@ def find_max_index(xml):
     return max(column_indexes) + 1 if column_indexes else 1
 
 def load_file():
-    global loaded_xml, current_path, next_id, next_index
+    global loaded_xml, current_path, next_id, next_index, buildrow_matches
     filepath = filedialog.askopenfilename(filetypes=[("XML Files", "*.xml")])
     if not filepath: return
     current_path = filepath
@@ -31,28 +87,14 @@ def load_file():
         detected = chardet.detect(raw_bytes)
         try:
             loaded_xml = raw_bytes.decode(detected['encoding'])
+            loaded_xml = loaded_xml.replace('\r\n', '\n')
             next_id = find_max_id(loaded_xml) + 1
             next_index = find_max_index(loaded_xml)
+            buildrow_matches = re.findall(r'<BuildRow ID="(\d+)">.*?<BuildTag Name="Tag" ID="\d+" Tag="\d+" TagName="([^"]+)"', loaded_xml, re.DOTALL)
+            refresh_buildrow_list()
             update_next_labels()
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to decode file: {e}")
-
-def reload_file():
-    if not current_path: return
-    with open(current_path, 'rb') as file:
-        raw_bytes = file.read()
-        detected = chardet.detect(raw_bytes)
-        try:
-            loaded_xml = raw_bytes.decode(detected['encoding'])
-            next_id = find_max_id(loaded_xml) + 1
-            next_index = find_max_index(loaded_xml)
-            update_next_labels()
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to reload file: {e}")
-
-def update_next_labels():
-    id_label.config(text=f"Next BuildColumn ID: {next_id}")
-    index_label.config(text=f"Next Index: {next_index}")
+            messagebox.showerror("Error", f"Failed to load XML: {e}")
 
 def fill_from_file():
     path = filedialog.askopenfilename()
@@ -77,55 +119,22 @@ def fill_from_file():
             datatype_combo.set('BuildTable')
     except Exception as e:
         messagebox.showerror("Error", f"Could not extract ID: {e}")
-    dt_map = {
-        'GraphicObject': (3966419799, 1179648, 'Handle'),
-        'Skeleton': (615435132, 1179648, 'Handle'),
-        'BuildTable': (585940579, 1835008, 'Reference')
-    }
-    dtype = datatype_combo.get()
-    if dtype not in dt_map:
-        messagebox.showerror("Missing Info", "Please select a valid DataType")
-        return
 
-def generate_dynamic_property():
-    dt_map = {
-        'GraphicObject': (3966419799, 1179648, 'Handle'),
-        'Skeleton': (615435132, 1179648, 'Handle'),
-        'BuildTable': (585940579, 1835008, 'Reference')
-    }
-    dtype = datatype_combo.get()
-    if dtype not in dt_map:
-        messagebox.showerror("Missing Info", "Please select a valid DataType")
-        return
+def refresh_buildrow_list():
+    global buildrow_vars
+    for widget in buildrow_list_frame.winfo_children():
+        widget.destroy()
+    buildrow_vars = {}
+    tk.Label(buildrow_list_frame, text="Select BuildRows for injection:").pack()
+    for i, (row_id, tagname) in enumerate(buildrow_matches):
+        var = tk.BooleanVar()
+        cb = tk.Checkbutton(buildrow_list_frame, text=f"{tagname} (ID: {row_id})", variable=var)
+        cb.pack(anchor='w')
+        buildrow_vars[i] = var
 
-    dt_id, type_val, structure = dt_map[dtype]
-    path = file_entry.get()
-    file_id = id_entry.get()
-    if not path or not file_id:
-        messagebox.showerror("Missing Info", "File path or ID is missing")
-        return
-
-    short_path = os.path.basename(path)
-
-    if structure == 'Handle':
-        ref_block = f'''<Handle>
-                        <Value Name="Value" Type="UInt64" Path="{short_path}">{file_id}</Value>
-                    </Handle>'''
-    else:
-        ref_block = f'''<Reference>
-                        <FileReference Name="Value" IsGlobal="0" Path="{short_path}">{file_id}</FileReference>
-                    </Reference>'''
-
-    generated = f'''
-                <DynamicProperty Index="{next_index}">
-                    <Value Name="DataType" Type="UInt32" HashName="{dtype}">{dt_id}</Value>
-                    <Value Name="Type" Type="UInt32">{type_val}</Value>
-                    <Value Name="Unk00" Type="UInt32">0</Value>
-                    {ref_block}
-                </DynamicProperty>'''
-
-    output_text.delete("1.0", tk.END)
-    output_text.insert(tk.END, generated)
+def update_next_labels():
+    id_label.config(text=f"Next BuildColumn ID: {next_id}")
+    index_label.config(text=f"Next Index: {next_index}")
 
 def generate_column():
     dt_map = {
@@ -133,13 +142,13 @@ def generate_column():
         'Skeleton': (615435132, 1179648, 'Handle'),
         'BuildTable': (585940579, 1835008, 'Reference')
     }
-    dtype = datatype_combo.get()
+    dtype = 'GraphicObject'
     if dtype not in dt_map:
         messagebox.showerror("Missing Info", "Please select a valid DataType")
         return
 
     dt_id, type_val, structure = dt_map[dtype]
-    global next_id, next_index
+    global next_id, next_index, loaded_xml
     next_id = find_max_id(loaded_xml) + 1
     next_index = find_max_index(loaded_xml)
     col_id = next_id
@@ -147,61 +156,201 @@ def generate_column():
     col_index = next_index
     next_id += 2
     update_next_labels()
-    generated = f'''
-        <BuildColumn ID="{col_id}" Index="{col_index}">
-            <Value Name="Pass" Type="Enum" EnumName="BuildColumnPass" ValueName="PropertyModifications2">5</Value>
-            <PropertyPath Name="TargetProperty" ID="{prop_id}">
-                <List Name="Nodes" />
-                <Value Name="TargetMustBeUnique" Type="Bool">True</Value>
-                <Value Name="SetWholeArray" Type="Bool">False</Value>
-            </PropertyPath>
-            <List Name="EntityPositionSelections" Type="ScimitarClass" />
-            <Value Name="HasTableRef" Type="Byte">1</Value>
-            <List Name="Components" Type="DynamicProperty">
-                <DynamicProperty>
-                    <Value Name="DataType" Type="UInt32" HashName="{dtype}">{dt_id}</Value>
-                    <Value Name="Type" Type="UInt32">1835008</Value>
-                    <Value Name="Unk00" Type="UInt32">0</Value>
-                    <Reference>
-                        <FileReference Name="Value" IsGlobal="0" Path="0">0</FileReference>
-                    </Reference>
-                </DynamicProperty>
-            </List>
-        </BuildColumn>'''
+
+    build_column_block = f'''
+<BuildColumn ID="{col_id}" Index="{col_index}">
+    <Value Name="Pass" Type="Enum" EnumName="BuildColumnPass" ValueName="PropertyModifications2">5</Value>
+    <PropertyPath Name="TargetProperty" ID="{prop_id}">
+        <List Name="Nodes" />
+        <Value Name="TargetMustBeUnique" Type="Bool">True</Value>
+        <Value Name="SetWholeArray" Type="Bool">False</Value>
+    </PropertyPath>
+    <List Name="EntityPositionSelections" Type="ScimitarClass" />
+    <Value Name="HasTableRef" Type="Byte">1</Value>
+    <List Name="Components" Type="DynamicProperty">
+        <DynamicProperty>
+            <Value Name="DataType" Type="UInt32" HashName="{dtype}">{dt_id}</Value>
+            <Value Name="Type" Type="UInt32">1835008</Value>
+            <Value Name="Unk00" Type="UInt32">0</Value>
+            <Reference>
+                <FileReference Name="Value" IsGlobal="0" Path="0">0</FileReference>
+            </Reference>
+        </DynamicProperty>
+    </List>
+</BuildColumn>'''.strip()
+
+    pattern = r'(</BuildColumn>)(\s*)(<List Name="BuildRows")'
+    match = re.search(pattern, loaded_xml, re.DOTALL)
+    if match:
+        insert = smart_indent_buildcolumn(build_column_block, base_indent=8)
+        insert_position = match.end(1)
+        loaded_xml = loaded_xml[:insert_position] + '\n' + insert + loaded_xml[insert_position:]
+
+        if current_path:
+            with open(current_path, 'w', encoding='utf-16') as f:
+                f.write(loaded_xml)
+            messagebox.showinfo("Injected", f"BuildColumn injected and saved to:\n{current_path}")
+        else:
+            messagebox.showinfo("Injected", "BuildColumn injected (unsaved - no original path)")
+    else:
+        messagebox.showerror("Error", "Could not find the correct BuildColumn section for injection.")
+
+def generate_dynamic_property(): 
+    global next_index, generated_properties
+    generated_properties = []  # clear previous
+    injected = []
+    dt_map = {
+        'GraphicObject': (3966419799, 1179648, 'Handle'),
+        'Skeleton': (615435132, 1179648, 'Handle'),
+        'BuildTable': (585940579, 1835008, 'Reference')
+    }
+    dtype = 'GraphicObject'
+    if dtype not in dt_map:
+        messagebox.showerror("Missing Info", "Please select a valid DataType")
+        return
+
+    dt_id, type_val, structure = dt_map[dtype]
+    path = file_entry.get()
+    file_id = id_entry.get()
+
+    for i, (row_id, tagname) in enumerate(buildrow_matches):
+        if buildrow_vars[i].get():
+            if structure == 'Handle':
+                ref_block = f'''<Handle>
+    <Value Name="Value" Type="UInt64" Path="{path}">{file_id}</Value>
+</Handle>'''
+            else:
+                ref_block = f'''<Reference>
+    <FileReference Name="Value" IsGlobal="0" Path="{path}">{file_id}</FileReference>
+</Reference>'''
+
+            generated = f'''<DynamicProperty Index="{next_index}">
+    <Value Name="DataType" Type="UInt32" HashName="{dtype}">{dt_id}</Value>
+    <Value Name="Type" Type="UInt32">{type_val}</Value>
+    <Value Name="Unk00" Type="UInt32">0</Value>
+    {ref_block}
+</DynamicProperty>'''.strip()
+
+            generated = smart_indent(generated)
+            injected.append(generated)
+            generated_properties.append(generated)
+
     output_text.delete("1.0", tk.END)
-    output_text.insert(tk.END, generated)
+
+    if injected:
+        output_text.insert(tk.END, "\n\n".join(injected))
+        update_next_labels()
+    else:
+        messagebox.showinfo("No Output", "No BuildRows selected. Nothing generated.")
+
+def inject_generated_properties():
+    global loaded_xml
+    if not generated_properties:
+        messagebox.showinfo("Nothing to Inject", "No generated properties to inject.")
+        return
+
+    modified_xml = loaded_xml
+    for i, (row_id, tagname) in enumerate(buildrow_matches):
+        if buildrow_vars[i].get():
+            pattern = rf'(<BuildRow ID="{row_id}">.*?<List Name="Components" Type="DynamicProperty">)(.*?)(</List>)'
+            match = re.search(pattern, modified_xml, re.DOTALL)
+            if match and generated_properties:
+                before, inside, after = match.groups()
+                insert = generated_properties.pop(0).strip()
+                insert_indented = smart_indent(insert, base_indent=16)
+                new_block = f"{before}{inside.rstrip()}\n{insert_indented}\n{' ' * 12}{after.strip()}"
+                modified_xml = modified_xml.replace(match.group(0), new_block)
+            else:
+                print(f"Could not find BuildRow with ID {row_id} to inject into.")
+
+    modified_xml = re.sub(r'(\r?\n){2,}', '\n', modified_xml)
+    modified_xml = modified_xml.replace('\r\n', '\n')
+    modified_xml = modified_xml.replace('\r', '\n')
+
+    save_path = filedialog.asksaveasfilename(defaultextension=".xml", filetypes=[("XML Files", "*.xml")])
+    if save_path:
+        with open(save_path, 'w', encoding='utf-16', newline='') as f:
+            f.write(modified_xml)
+        messagebox.showinfo("Injected", f"Saved with injections to:\n{save_path}")
+    else:
+        messagebox.showinfo("Cancelled", "Injection cancelled.")
 
 # GUI Setup
 root = tk.Tk()
 root.title("BuildTable GUI Generator")
-root.geometry("1000x500")
+root.geometry("1200x700")
 
-right_frame = tk.Frame(root)
-right_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+main_frame = tk.Frame(root)
+main_frame.pack(fill=tk.BOTH, expand=True)
 
-file_controls = tk.Frame(right_frame)
-file_controls.pack()
-tk.Button(file_controls, text="Fill from File", command=fill_from_file).pack(pady=2)
+left_frame = tk.Frame(main_frame)
+left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+# Define output_text early so it's accessible in functions
+output_text = tk.Text(left_frame, height=20, width=80)
+output_text.pack(pady=10)
+
+file_buttons = tk.Frame(left_frame)
+file_buttons.pack(anchor='w', pady=5)
+tk.Button(file_buttons, text="Open BuildTable XML", command=load_file).pack(side=tk.LEFT, padx=5)
+tk.Button(file_buttons, text="Reload XML", command=load_file).pack(side=tk.LEFT, padx=5)
+
+next_info = tk.Frame(left_frame)
+next_info.pack(anchor='w', pady=5)
+id_label = tk.Label(next_info, text=f"Next BuildColumn ID: {next_id}")
+id_label.pack(side=tk.LEFT, padx=5)
+index_label = tk.Label(next_info, text=f"Next Index: {next_index}")
+index_label.pack(side=tk.LEFT, padx=5)
+
+gen_col_frame = tk.Frame(left_frame)
+gen_col_frame.pack(anchor='w', pady=10)
+tk.Button(gen_col_frame, text="Generate BuildColumn Template", command=generate_column).pack(side=tk.LEFT, padx=5)
+tk.Button(gen_col_frame, text="Generate DynamicProperty", command=generate_dynamic_property).pack(side=tk.LEFT, padx=5)
+tk.Button(gen_col_frame, text="Inject to BuildRows & Save", command=inject_generated_properties).pack(side=tk.LEFT, padx=5)
+
+# Row: File entry and Fill from File
+file_controls = tk.Frame(left_frame)
+file_controls.pack(anchor='w', pady=5)
+tk.Label(file_controls, text="File:").pack(side=tk.LEFT)
 file_entry = tk.Entry(file_controls, width=50)
-file_entry.pack()
-id_entry = tk.Entry(file_controls, width=50)
-id_entry.pack()
+file_entry.pack(side=tk.LEFT, padx=5)
+tk.Button(file_controls, text="Fill from File", command=fill_from_file).pack(side=tk.LEFT, padx=5)
 
-datatype_combo = ttk.Combobox(right_frame, values=["GraphicObject", "Skeleton", "BuildTable"])
+# Row: ID entry
+id_controls = tk.Frame(left_frame)
+id_controls.pack(anchor='w', pady=5)
+tk.Label(id_controls, text="File ID:").pack(side=tk.LEFT)
+id_entry = tk.Entry(id_controls, width=30)
+id_entry.pack(side=tk.LEFT, padx=5)
+
+# Row: DataType combobox
+datatype_row = tk.Frame(left_frame)
+datatype_row.pack(anchor='w', pady=5)
+tk.Label(datatype_row, text="DataType:").pack(side=tk.LEFT)
+datatype_combo = ttk.Combobox(datatype_row, values=["GraphicObject", "Skeleton", "BuildTable"], width=30)
 datatype_combo.set("GraphicObject")
-datatype_combo.pack(pady=2)
+datatype_combo.pack(side=tk.LEFT, padx=5)
 
-id_label = tk.Label(right_frame, text="Next BuildColumn ID: ?")
-id_label.pack()
-index_label = tk.Label(right_frame, text="Next Index: ?")
-index_label.pack()
+right_frame = tk.Frame(main_frame)
+right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
 
-tk.Button(right_frame, text="Open BuildTable XML", command=load_file).pack(pady=5)
-tk.Button(right_frame, text="Reload XML", command=reload_file).pack(pady=5)
-tk.Button(right_frame, text="Generate BuildColumn Template", command=generate_column).pack(pady=5)
-tk.Button(right_frame, text="Generate DynamicProperty", command=generate_dynamic_property).pack(pady=5)
+tk.Label(right_frame, text="Select BuildRows for Injection:", font=("Arial", 10, "bold")).pack(anchor='nw')
+buildrow_list_outer = tk.Frame(right_frame)
+buildrow_list_outer.pack(fill=tk.BOTH, expand=True)
+buildrow_canvas = tk.Canvas(buildrow_list_outer)
+scrollbar = tk.Scrollbar(buildrow_list_outer, orient="vertical", command=buildrow_canvas.yview)
+scrollable_frame = tk.Frame(buildrow_canvas)
 
-output_text = tk.Text(right_frame, height=20, width=80)
-output_text.pack()
+scrollable_frame.bind(
+    "<Configure>",
+    lambda e: buildrow_canvas.configure(scrollregion=buildrow_canvas.bbox("all"))
+)
+
+buildrow_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+buildrow_canvas.configure(yscrollcommand=scrollbar.set)
+buildrow_canvas.pack(side="left", fill="both", expand=True)
+scrollbar.pack(side="right", fill="y")
+
+buildrow_list_frame = scrollable_frame
 
 root.mainloop()
