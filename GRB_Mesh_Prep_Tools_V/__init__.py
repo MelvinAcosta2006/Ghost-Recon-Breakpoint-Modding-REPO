@@ -194,6 +194,74 @@ class LOD_OT_WriteBinarySelector(bpy.types.Operator):
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
 
+# ------------------------------------------------------------------------
+# Operators – Batch LOD Export
+# ------------------------------------------------------------------------
+
+class LOD_OT_GenerateAndExportBatch(bpy.types.Operator):
+    bl_idname = "lod.generate_export_batch"
+    bl_label = "Generate and Export LOD Setup"
+    bl_description = "Automatically generate IDs and export LODSelectors + meshes for all selected objects"
+
+    def execute(self, context):
+        props = context.scene.lodselector_props
+        selected = [o for o in context.selected_objects if o.type == 'MESH']
+
+        if not selected:
+            self.report({'ERROR'}, "No mesh objects selected.")
+            return {'CANCELLED'}
+
+        if not props.output_dir:
+            self.report({'ERROR'}, "Output directory is required.")
+            return {'CANCELLED'}
+
+        template = props.custom_template_path or get_template_paths()[0]
+        exported = 0
+
+        for obj in selected:
+            # -------- Name resolution --------
+            if props.use_selected_object_name:
+                base_name = bpy.path.clean_name(obj.name)
+            else:
+                base_name = f"{props.type_tag.strip()}_{props.name_input.strip()}" \
+                    if props.type_tag.strip() else props.name_input.strip()
+
+            if not base_name:
+                continue
+
+            # -------- ID generation (respect override) --------
+            try:
+                if props.base_id_override:
+                    selector_id = int(pad_or_generate_base_id(props.base_id_override))
+                else:
+                    selector_id = generate_13_digit_id()
+            except Exception as e:
+                self.report({'ERROR'}, f"Invalid Base ID Override: {e}")
+                return {'CANCELLED'}
+
+            lod_ids = [selector_id + i for i in range(1, 6)]
+
+            # -------- Output paths --------
+            out_folder = os.path.join(
+                props.output_dir,
+                f"99999_-_{base_name}.data"
+            )
+            os.makedirs(out_folder, exist_ok=True)
+
+            lodselector_path = os.path.join(
+                out_folder,
+                f"0_-_{base_name}.LODSelector"
+            )
+
+            # -------- Write files --------
+            write_lodselector_binary(template, lodselector_path, selector_id, lod_ids)
+            save_generated_ids_to_txt(lodselector_path, selector_id, lod_ids)
+            generate_lod_mesh_variants(out_folder, base_name, lod_ids)
+
+            exported += 1
+
+        self.report({'INFO'}, f"Generated and exported {exported} LOD setup(s).")
+        return {'FINISHED'}
 
 # ------------------------------------------------------------------------
 # Operators – Mesh Tools
@@ -417,15 +485,18 @@ class GRB_PT_ToolsPanel(bpy.types.Panel):
         layout.label(text="📦 LOD Generator")
         layout.prop(p, "output_dir")
         layout.prop(p, "custom_template_path")
-        layout.prop(p, "name_input")
-        layout.prop(p, "type_tag")
         layout.prop(p, "use_selected_object_name")
+        if not p.use_selected_object_name:
+            layout.prop(p, "name_input")
+            layout.prop(p, "type_tag")
         layout.prop(p, "base_id_override")
-        layout.operator("lod.generate_id")
-        layout.operator("lod.write_binary_selector")
-        layout.label(text="Generated IDs:")
-        for name in ["gen_selector_id", "gen_lod0", "gen_lod1", "gen_lod2", "gen_lod3", "gen_lod4"]:
-            layout.label(text=f"{name.split('_')[-1].upper()}: {getattr(p, name)}")
+
+        layout.separator()
+        layout.label(text="One-Click Batch Export")
+        layout.operator(
+            "lod.generate_export_batch",
+            icon='EXPORT'
+        )
 
         layout.separator()
         layout.label(text="🧩 Mesh Tools")
@@ -461,6 +532,7 @@ classes = [
     GRBSettings,
     LOD_OT_GenerateID,
     LOD_OT_WriteBinarySelector,
+    LOD_OT_GenerateAndExportBatch,
     LOD_OT_MakeLOD0,
     LOD_OT_DecimateDuplicate,
     LOD_OT_ParentCleanArmature,
